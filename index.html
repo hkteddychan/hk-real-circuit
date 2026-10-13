@@ -49,11 +49,18 @@ html,body,#cesiumContainer{width:100%;height:100%;margin:0;overflow:hidden;font-
 Cesium.Ion.defaultAccessToken='';
 const container=document.getElementById('cesiumContainer');
 const viewer=new Cesium.Viewer(container,{animation:false,timeline:false,baseLayerPicker:false,geocoder:false,homeButton:false,sceneModePicker:false,navigationHelpButton:false,fullscreenButton:false,infoBox:false,selectionIndicator:false,shouldAnimate:true});
-viewer.scene.globe.show=true;viewer.scene.globe.depthTestAgainstTerrain=false;
+viewer.scene.globe.show=true;viewer.scene.globe.depthTestAgainstTerrain=false;viewer.scene.globe.showGroundAtmosphere=false;
 const KEY='3967f8f365694e0798af3e7678509421';
 const BASE='https://data.map.gov.hk/api/3d-data/3dsd/WGS84/';
 let heading=0.02,pitch=-0.72,range=4300;
-async function addTiles(url,label){try{const t=await Cesium.Cesium3DTileset.fromUrl(url);viewer.scene.primitives.add(t);return t}catch(e){console.error(label,e);return null}}
+async function addTiles(url,label){
+ try{
+  const t=await Cesium.Cesium3DTileset.fromUrl(url,{maximumScreenSpaceError:32,skipLevelOfDetail:true,preloadFlightDepth:false});
+  viewer.scene.primitives.add(t);
+  t.tileCacheSize=256;
+  return t;
+ }catch(e){console.error(label,e);return null}
+}
 async function init(){await Promise.all([addTiles(BASE+'building/tileset.json?key='+KEY,'B'),addTiles(BASE+'infrastructure/tileset.json?key='+KEY,'I')]);fly(114.1588,22.2816,3800)}
 function fly(lon,lat,r){viewer.camera.flyTo({destination:Cesium.Cartesian3.fromDegrees(lon,lat,r),orientation:{heading,pitch,roll:0},duration:1.2})}
 // Real HK route (Central -> Wan Chai -> Causeway Bay -> back)

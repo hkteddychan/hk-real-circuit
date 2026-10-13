@@ -165,7 +165,7 @@ function buildTrackVisuals(){
 let game=null;
 function resetGame(aiCount,totalLaps,assist,camMode){
  liftBrakeT=0;liftBoostT=0;
- viewer.camera.frustum.fov=Cesium.Math.toRadian(60);
+ viewer.camera.frustum.fov=Math.PI/3;
  const st={cars:[],player:null,started:false,countdown:0,countT:0,raceTime:0,laps:totalLaps,assist,camMode,finished:false,
   sector:1,lastSector:1,secT:0,sectorTimes:[0,0,0],sectorActive:false,sectorFlash:0,
   lapStart:0,lastLap:0,lastLapCount:0,best:0,lapFlash:0,
@@ -499,8 +499,8 @@ function updateCamera(dt){
  const dist=game.camMode==='車內'?10:95;
  const pitch=game.camMode==='車內'?-0.08:-0.35;
  // FOV scales with speed for sense of acceleration (wider at high speed)
- const baseFov=Cesium.Math.toRadian(60);
- const targetFov=baseFov+Cesium.Math.toRadian(Math.min(15,p.speed*0.075));
+ const baseFov=Math.PI/3;
+ const targetFov=baseFov+Math.PI/180*Math.min(15,p.speed*0.075);
  const curFov=viewer.camera.frustum.fov;
  viewer.camera.frustum.fov=curFov+(targetFov-curFov)*Math.min(1,6*dt);
  // Subtle camera shake at high speed (above 80 km/h)

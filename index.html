@@ -1,2 +1,238 @@
-<!doctype html><html lang="zh-HK"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HK Real Circuit 3D｜Central・灣仔真實地貌</title><script src="https://cesium.com/downloads/cesiumjs/releases/1.116/Build/Cesium/Cesium.js" onerror="(function(){var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/cesium@1.116/Build/Cesium/Cesium.js';document.head.appendChild(s)})()"></script><link href="https://cesium.com/downloads/cesiumjs/releases/1.116/Build/Cesium/Widgets/widgets.css" rel="stylesheet"><style>html,body,#cesiumContainer{width:100%;height:100%;margin:0;overflow:hidden;font-family:system-ui;background:#07111c}.panel{position:fixed;z-index:5;top:16px;left:16px;width:min(370px,calc(100vw - 32px));padding:18px;border:1px solid #52dcff88;border-radius:16px;background:#071526dd;color:#e9faff;backdrop-filter:blur(12px);box-shadow:0 10px 30px #0008}.panel h1{margin:0;color:#72eaff;font-size:1.2rem}.panel p{font-size:.85rem;color:#b7d3dd;line-height:1.45}.status{margin:12px 0;padding:10px;border-radius:9px;background:#102c3a;color:#8ceeff;font-size:.8rem}.row{display:flex;gap:8px;margin-top:10px}button{flex:1;padding:10px;border:1px solid #42cfff77;border-radius:9px;background:#10314a;color:#e9faff;font-weight:700;cursor:pointer}button:hover{background:#17627d}.credit{font-size:.68rem;color:#8aaebb;margin-top:11px;line-height:1.35}.cesium-viewer-bottom{display:none}.racehud{position:fixed;z-index:6;right:16px;top:16px;display:none;padding:14px;border:1px solid #52dcff88;border-radius:12px;background:#071526dd;color:#e9faff;font-weight:700}.racehud b{color:#72eaff}.drive{position:fixed;z-index:6;bottom:18px;left:50%;transform:translateX(-50%);display:none;gap:8px}.drive button{width:58px;height:48px}.devnote{color:#ffd27a;font-size:.72rem}</style></head><body><div id="cesiumContainer"></div><section class="panel"><h1>HK REAL CIRCUIT 3D</h1><p>真實香港地貌測試版｜Central・灣仔</p><div class="status" id="status">正在載入香港政府 3D Buildings / Infrastructure…</div><div class="row"><button id="central">Central</button><button id="wan">Wan Chai</button><button id="cb">Causeway Bay</button></div><div class="row"><button id="tilt">切換 3D 視角</button><button id="reset">重設視角</button></div><div class="row"><button id="race">開始駕駛</button><button id="stop">停止</button></div><div class="credit">資料：香港特別行政區政府地政總署 CSDI 3D Spatial Data API。呢個版本先驗證真實 3D 地貌及城市模型，賽車物理會接入下一版。</div></section><div class="racehud" id="racehud">SPEED <b id="spd">0</b> km/h<br>LAP <b id="lap">1/3</b> · <b id="place">TEST</b><br><span class="devnote">遊戲駕駛開發中</span></div><div class="drive" id="drive"><button id="left">◀</button><button id="gas">▲</button><button id="right">▶</button></div><script>
-Cesium.Ion.defaultAccessToken='';const status=document.getElementById('status');const viewer=new Cesium.Viewer('cesiumContainer',{animation:false,timeline:false,baseLayerPicker:false,geocoder:false,homeButton:false,sceneModePicker:false,navigationHelpButton:false,fullscreenButton:true,infoBox:false,selectionIndicator:false,shouldAnimate:true});viewer.scene.globe.show=true;viewer.scene.globe.depthTestAgainstTerrain=false;const KEY='3967f8f365694e0798af3e7678509421';const base='https://data.map.gov.hk/api/3d-data/3dsd/WGS84/';let heading=0.02,pitch=-0.72,range=4300;async function add(url,label){try{const tiles=await Cesium.Cesium3DTileset.fromUrl(url);viewer.scene.primitives.add(tiles);status.textContent+=' '+label+' ✅';return tiles}catch(e){status.textContent+=' '+label+' ❌';console.error(e)}}async function init(){await Promise.all([add(base+'building/tileset.json?key='+KEY,'Buildings'),add(base+'infrastructure/tileset.json?key='+KEY,'Infrastructure')]);status.textContent='香港政府真實 3D 城市模型已載入 ✅';fly(114.1588,22.2816,range)}function fly(lon,lat,r=range){viewer.camera.flyTo({destination:Cesium.Cartesian3.fromDegrees(lon,lat,r),orientation:{heading,pitch,roll:0},duration:1.2})}const route=[[114.1588,22.2816],[114.1632,22.2805],[114.1685,22.2788],[114.1722,22.2769],[114.1770,22.2782],[114.1847,22.2800],[114.1815,22.2832],[114.1722,22.2769],[114.1650,22.2798],[114.1588,22.2816]];let car,drive=false,ri=0,progress=0,speed=0,keys={};function makeRace(){viewer.entities.add({polyline:{positions:Cesium.Cartesian3.fromDegreesArray(route.flat()),width:5,material:Cesium.Color.CYAN.withAlpha(.75),clampToGround:true}});car=viewer.entities.add({position:Cesium.Cartesian3.fromDegrees(route[0][0],route[0][1],8),point:{pixelSize:18,color:Cesium.Color.ORANGE,outlineColor:Cesium.Color.WHITE,outlineWidth:2}})}function move(dt){if(!drive||!car)return;let gas=keys.ArrowUp||keys.w||keys.gas,turn=(keys.ArrowLeft||keys.a||keys.left?-1:0)+(keys.ArrowRight||keys.d||keys.right?1:0);speed=Math.max(0,Math.min(160,speed+(gas?55:-30)*dt));progress+=speed*dt/450;ri=Math.floor(progress)% (route.length-1);let f=progress%1,a=route[ri],b=route[ri+1];let lon=a[0]+(b[0]-a[0])*f+(turn*.00002),lat=a[1]+(b[1]-a[1])*f;car.position=Cesium.Cartesian3.fromDegrees(lon,lat,8);viewer.camera.lookAt(car.position,new Cesium.HeadingPitchRange(0,-.35,700));document.getElementById('spd').textContent=Math.round(speed);document.getElementById('lap').textContent=(Math.min(3,Math.floor(progress/(route.length-1))+1))+'/3'}let lastT=performance.now();function raceLoop(){let n=performance.now(),dt=Math.min(.05,(n-lastT)/1000);lastT=n;move(dt);requestAnimationFrame(raceLoop)}raceLoop();document.getElementById('race').onclick=()=>{makeRace();drive=true;document.getElementById('racehud').style.display='block';document.getElementById('drive').style.display='flex'};document.getElementById('stop').onclick=()=>{drive=false;document.getElementById('racehud').style.display='none';document.getElementById('drive').style.display='none';viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY)};window.addEventListener('keydown',e=>{keys[e.key]=1;if(e.key==='ArrowUp'||e.key==='w'||e.key==='W')e.preventDefault()});window.addEventListener('keyup',e=>keys[e.key]=0);['left','gas','right'].forEach(id=>{let b=document.getElementById(id);b.onpointerdown=()=>keys[id]=1;b.onpointerup=()=>keys[id]=0;b.onpointerleave=()=>keys[id]=0});document.getElementById('central').onclick=()=>fly(114.1588,22.2816,3500);document.getElementById('wan').onclick=()=>fly(114.1722,22.2769,3000);document.getElementById('cb').onclick=()=>fly(114.1847,22.2800,2600);document.getElementById('reset').onclick=()=>fly(114.1588,22.2816,4300);document.getElementById('tilt').onclick=()=>{pitch=pitch>-1?-1.15:-.72;fly(114.1588,22.2816,range)};init();</script></body></html>
+<!doctype html><html lang="zh-HK"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HK Real Circuit 3D｜真實香港賽車</title>
+<script src="https://cesium.com/downloads/cesiumjs/releases/1.116/Build/Cesium/Cesium.js" onerror="(function(){var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/cesium@1.116/Build/Cesium/Cesium.js';document.head.appendChild(s)})()"></script>
+<link href="https://cesium.com/downloads/cesiumjs/releases/1.116/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+<style>
+html,body,#cesiumContainer{width:100%;height:100%;margin:0;overflow:hidden;font-family:system-ui;background:#07111c}
+#ui{position:fixed;z-index:8;inset:0;pointer-events:none}
+#ui>*{pointer-events:auto}
+#menu{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(400px,92vw);padding:22px;border:1px solid #52dcff88;border-radius:16px;background:#071526ee;color:#e9faff;box-shadow:0 10px 40px #000c;backdrop-filter:blur(10px)}
+#menu h1{margin:0 0 4px;color:#72eaff;font-size:1.4rem}
+#menu p{font-size:.85rem;color:#b7d3dd;margin:4px 0 12px}
+.set{display:flex;justify-content:space-between;align-items:center;margin:8px 0}
+.set label{font-size:.9rem}
+.set select,.set input{background:#10314a;color:#e9faff;border:1px solid #42cfff77;border-radius:8px;padding:6px 8px;font-size:.9rem}
+#startBtn{width:100%;padding:12px;font-size:1.05rem;border:1px solid #42cfff;border-radius:10px;background:#0e6a8f;color:#fff;font-weight:700;cursor:pointer}
+#startBtn:hover{background:#0a84b5}
+#hud{position:absolute;top:12px;right:12px;display:none;padding:12px 16px;border:1px solid #52dcff88;border-radius:12px;background:#071526cc;color:#e9faff;font-size:.95rem;line-height:1.7;min-width:150px}
+#hud b{color:#72eaff}
+#lights{position:absolute;top:22%;left:50%;transform:translateX(-50%);display:none;gap:10px}
+#lights .l{width:46px;height:46px;border-radius:50%;background:#222;border:2px solid #666}
+#lights .l.on{background:#ff3030;box-shadow:0 0 18px #ff3030aa}
+#lights .l.go{background:#2dff6a;box-shadow:0 0 22px #2dff6aaa}
+#msg{position:absolute;top:38%;left:50%;transform:translateX(-50%);display:none;font-size:1.6rem;font-weight:800;color:#ffd27a;text-shadow:0 2px 10px #000}
+#finish{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:none;padding:22px;border:1px solid #52dcff88;border-radius:16px;background:#071526ee;color:#e9faff;text-align:center;min-width:260px;box-shadow:0 10px 40px #000c}
+#finish h2{margin:0 0 10px;color:#72eaff}
+#againBtn{margin-top:12px;padding:10px 22px;border:1px solid #42cfff;border-radius:10px;background:#0e6a8f;color:#fff;font-weight:700;cursor:pointer}
+#drive{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);display:none;gap:10px}
+#drive button{width:60px;height:52px;font-size:1.2rem;border:1px solid #42cfff77;border-radius:12px;background:#10314acc;color:#fff;touch-action:none}
+#note{position:absolute;bottom:6px;left:10px;color:#8aaebb;font-size:.7rem}
+</style></head><body>
+<div id="cesiumContainer"></div>
+<div id="ui">
+ <div id="menu">
+  <h1>🏎️ HK REAL CIRCUIT 3D</h1>
+  <p>真實香港地貌 · Central／灣仔／銅鑼灣封閉賽道</p>
+  <div class="set"><label>AI 對手（0–7）</label><select id="aiSel"><option>0</option><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option><option>7</option></select></div>
+  <div class="set"><label>圈數</label><select id="lapSel"><option selected>3</option><option>5</option><option>8</option></select></div>
+  <div class="set"><label>電腦輔助</label><select id="assistSel"><option>Off</option><option>Low</option><option>High</option></select></div>
+  <div class="set"><label>視角</label><select id="camSel"><option selected>第三身</option><option>車內</option></select></div>
+  <button id="startBtn">🏁 開始比賽</button>
+ </div>
+ <div id="lights"><div class="l" id="l0"></div><div class="l" id="l1"></div><div class="l" id="l2"></div><div class="l" id="l3"></div></div>
+ <div id="msg"></div>
+ <div id="hud">SPEED <b id="spd">0</b> km/h<br>LAP <b id="lap">1/3</b> · POS <b id="pos">1</b><br>TIME <b id="tm">0.0</b> s</div>
+ <div id="finish"><h2 id="finTitle">🏁 完賽！</h2><div id="finBody"></div><button id="againBtn">🔄 再玩一次</button></div>
+ <div id="drive"><button id="dL">◀</button><button id="dG">▲</button><button id="dR">▶</button><button id="dB">▼</button></div>
+ <div id="note">W/↑加速 · S/↓煞車 · A/D 轉向 · C 視角 · 手機觸控</div>
+</div>
+<script>
+Cesium.Ion.defaultAccessToken='';
+const container=document.getElementById('cesiumContainer');
+const viewer=new Cesium.Viewer(container,{animation:false,timeline:false,baseLayerPicker:false,geocoder:false,homeButton:false,sceneModePicker:false,navigationHelpButton:false,fullscreenButton:false,infoBox:false,selectionIndicator:false,shouldAnimate:true});
+viewer.scene.globe.show=true;viewer.scene.globe.depthTestAgainstTerrain=false;
+const KEY='3967f8f365694e0798af3e7678509421';
+const BASE='https://data.map.gov.hk/api/3d-data/3dsd/WGS84/';
+let heading=0.02,pitch=-0.72,range=4300;
+async function addTiles(url,label){try{const t=await Cesium.Cesium3DTileset.fromUrl(url);viewer.scene.primitives.add(t);return t}catch(e){console.error(label,e);return null}}
+async function init(){await Promise.all([addTiles(BASE+'building/tileset.json?key='+KEY,'B'),addTiles(BASE+'infrastructure/tileset.json?key='+KEY,'I')]);fly(114.1588,22.2816,3800)}
+function fly(lon,lat,r){viewer.camera.flyTo({destination:Cesium.Cartesian3.fromDegrees(lon,lat,r),orientation:{heading,pitch,roll:0},duration:1.2})}
+// Real HK route (Central -> Wan Chai -> Causeway Bay -> back)
+const ROUTE=[[114.1588,22.2816],[114.1632,22.2805],[114.1685,22.2788],[114.1722,22.2769],[114.1770,22.2782],[114.1847,22.2800],[114.1815,22.2832],[114.1722,22.2769],[114.1650,22.2798],[114.1588,22.2816]];
+const ROUTE_REF=ROUTE.map(p=>Cesium.Cartesian3.fromDegrees(p[0],p[1],0));
+const TOT=ROUTE.length-1;
+// Race state
+let game=null;
+function resetGame(aiCount,totalLaps,assist,camMode){
+ const st={cars:[],player:null,started:false,countdown:0,countT:0,raceTime:0,laps:totalLaps,assist,camMode,finished:false};
+ // Player car
+ st.player=makeCar('Player',Cesium.Color.ORANGE,0,true);
+ for(let i=0;i<aiCount;i++){st.cars.push(makeCar('AI'+(i+1),Cesium.Color.fromHsl((i*0.21)%1,0.8,0.5),i+1,false));}
+ st.cars.push(st.player);
+ return st;
+}
+function makeCar(name,color,offset,isPlayer){
+ const pos=Cesium.Cartesian3.fromDegrees(ROUTE[0][0],ROUTE[0][1],3);
+ const e=viewer.entities.add({
+  name,
+  position:pos,
+  orientation:Cesium.Quaternion.IDENTITY,
+  box:{dimensions:new Cesium.Cartesian3(2.2,5.0,1.3),material:Cesium.Color.fromColor(color,0.95),outline:true,outlineColor:Cesium.Color.WHITE},
+  label:{text:name,font:'12px sans-serif',pixelOffset:new Cesium.Cartesian2(0,-28),fillColor:Cesium.Color.WHITE,show:true,disableDepthTestDistance:2000}
+ });
+ return {e,name,color,offset,isPlayer,progress:offset*0.03,speed:0,heading:segHeading(0),lateral:0,lapsDone:0,lapStart:0,best:0,lastLap:0,finished:false,finishT:0,onTrack:true};
+}
+function segHeading(i){const a=ROUTE[i],b=ROUTE[i+1];return Math.atan2(b[1]-a[1],b[0]-a[0]);}
+function routePos(p){
+ const seg=Math.floor(p)%TOT;const f=p-Math.floor(p);
+ const a=ROUTE[seg],b=ROUTE[seg+1];
+ return {lon:a[0]+(b[0]-a[0])*f,lat:a[1]+(b[1]-a[1])*f,seg,f};
+}
+function trackHeading(p){return segHeading(Math.floor(p)%TOT);}
+function distToRoute(lon,lat){
+ let best=1e9;
+ for(let i=0;i<TOT;i++){const a=ROUTE[i],b=ROUTE[i+1];
+  const dx=b[0]-a[0],dy=b[1]-a[1];const t=Math.max(0,Math.min(1,((lon-a[0])*dx+(lat-a[1])*dy)/(dx*dx+dy*dy)));
+  const px=a[0]+dx*t,py=a[1]+dy*t;const d=Math.hypot(lon-px,lat-py);if(d<best)best=d;}
+ return best;
+}
+// Controls
+const keys={};
+window.addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase())||e.key===' ')e.preventDefault();if(e.key.toLowerCase()==='c'&&game&&!game.countdown){switchCam();}});
+window.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+function switchCam(){game.camMode=game.camMode==='第三身'?'車內':'第三身';document.getElementById('camSel').value=game.camMode;}
+['dL','dG','dR','dB'].forEach(id=>{const b=document.getElementById(id);b.addEventListener('pointerdown',()=>{keys[id]=true});b.addEventListener('pointerup',()=>keys[id]=false);b.addEventListener('pointerleave',()=>keys[id]=false);});
+// Race flow
+document.getElementById('startBtn').onclick=()=>{
+ const ai=parseInt(document.getElementById('aiSel').value);
+ const laps=parseInt(document.getElementById('lapSel').value);
+ const assist=document.getElementById('assistSel').value;
+ const cam=document.getElementById('camSel').value;
+ game=resetGame(ai,laps,assist,cam);
+ const sp=routePos(0);
+ viewer.camera.setView({destination:Cesium.Cartesian3.fromDegrees(sp.lon,sp.lat,220),orientation:{heading:0.6,pitch:-0.4,roll:0}});
+ document.getElementById('menu').style.display='none';
+ document.getElementById('hud').style.display='block';
+ document.getElementById('drive').style.display='flex';
+ document.getElementById('lights').style.display='flex';
+ beginCountdown();
+};
+function beginCountdown(){
+ game.countdown=4;game.countT=0;game.started=false;game.raceTime=0;
+ showLights(3);setMsg('READY');nextCount();
+}
+function nextCount(){
+ if(!game)return;
+ game.countdown--;
+ if(game.countdown<=0){game.started=true;showLights(0,true);setMsg('GO!');setTimeout(()=>setMsg(''),900);return;}
+ showLights(game.countdown-1);setMsg(game.countdown);setTimeout(nextCount,800);
+}
+function showLights(n,go){for(let i=0;i<4;i++){const l=document.getElementById('l'+i);l.className='l'+(i<n?' on':(go&&i===0?' go':''));}}
+function setMsg(t){const m=document.getElementById('msg');if(!t){m.style.display='none';return;}m.textContent=t;m.style.display='block';}
+document.getElementById('againBtn').onclick=()=>{
+ for(const c of game.cars){viewer.entities.remove(c.e);}
+ game=null;document.getElementById('finish').style.display='none';
+ document.getElementById('hud').style.display='none';
+ document.getElementById('drive').style.display='none';
+ document.getElementById('lights').style.display='none';
+ document.getElementById('menu').style.display='block';
+};
+// Simulation
+function update(dt){
+ if(!game||game.finished)return;
+ const st=game;
+ if(st.countdown>0){return;}
+ const p=st.player;
+ st.raceTime+=dt;
+ const gas=keys.w||keys['arrowup']||keys.dG;
+ const brk=keys.s||keys['arrowdown']||keys.dB;
+ const turn=(keys.a||keys.dL?-1:0)+(keys.d||keys.dR?1:0);
+ // ---- Arcade physics: track-follow progress + lateral offset + heading ----
+ const maxSpeed=180,accel=58,brake=95,drag=0.28;
+ let targetHeading=trackHeading(p.progress);
+ // assist: High = auto-steer + auto-brake; Low = light pull to track
+ if(st.assist==='High'){
+  p.heading=targetHeading;
+  p.lateral*=0.6;
+ } else if(st.assist==='Low'){
+  p.heading+=angleDiff(p.heading,targetHeading)*Math.min(1,4*dt);
+  p.lateral*=0.85;
+ }
+ // manual steering (heading in radians)
+ const turnRate=2.2/(1+Math.abs(p.speed)/100);
+ if(st.assist!=='High'){p.heading+=turn*turnRate*dt;}
+ // throttle/brake
+ const speedUp=(gas?accel:0)-(brk?brake:0);
+ const dragF=drag*p.speed*(p.speed/maxSpeed)/maxSpeed;
+ p.speed=Math.max(0,Math.min(maxSpeed,p.speed+speedUp*dt-dragF*dt));
+ // heading vs track -> lateral drift
+ const dh=angleDiff(p.heading,targetHeading);
+ p.lateral+=Math.sin(dh)*p.speed*0.0000016*dt;
+ // off-track (lateral beyond half road width ~ 0.001 deg) -> slow + pull back
+ const off=Math.abs(p.lateral);
+ if(off>0.0011){p.speed=Math.max(0,p.speed-160*dt);p.lateral*=0.9;}
+ // advance along track
+ p.progress+=((p.speed/maxSpeed)*dt)*0.9;
+ // position = track point + perpendicular offset
+ const rp=routePos(p.progress);
+ const th=trackHeading(p.progress);
+ const perp=th+Math.PI/2;
+ const lon=rp.lon+Math.cos(perp)*p.lateral;
+ const lat=rp.lat+Math.sin(perp)*p.lateral;
+ p.e.position=Cesium.Cartesian3.fromDegrees(lon,lat,2.5);
+ p.e.orientation=Cesium.Transforms.headingPitchRollQuaternion(p.e.position,new Cesium.HeadingPitchRoll(p.heading,0,0));
+ // laps
+ if(p.progress>=st.laps*TOT&&!p.finished){finishCar(p);}
+ // AI
+ for(const c of st.cars){if(c.isPlayer||c.finished)continue;aiDrive(c,dt);}
+ updateHUD();updateCamera(dt);
+}
+function angleDiff(a,b){let d=b-a;while(d>Math.PI)d-=2*Math.PI;while(d<-Math.PI)d+=2*Math.PI;return d;}
+function aiDrive(c,dt){
+ const st=game;
+ const maxS=110+Math.sin(c.offset*2.3)*25;
+ const t=trackHeading(c.progress);c.heading=t;
+ // gap to player ahead on track
+ let ahead=null,ga=1e9;
+ for(const o of st.cars){if(o===c||o.finished)continue;let d=o.progress-c.progress;if(d<0)d+=TOT*1.2;if(d<ga){ga=d;ahead=o;}}
+ let target=maxS;
+ if(ga<0.12)target=Math.min(target,ga*maxS*8);
+ c.speed=Math.max(0,c.speed+(target-c.speed)*Math.min(1,2.5*dt));
+ c.progress+=((c.speed/180)*dt)/6.0;
+ const rp=routePos(c.progress);
+ c.e.position=Cesium.Cartesian3.fromDegrees(rp.lon,rp.lat,2.5);
+ c.e.orientation=Cesium.Transforms.headingPitchRollQuaternion(c.e.position,new Cesium.HeadingPitchRoll(c.heading,0,0));
+ if(c.progress>=st.laps*TOT&&!c.finished){finishCar(c);}
+}
+function finishCar(c){
+ c.finished=true;c.finishT=game.raceTime;
+ const order=game.cars.filter(x=>x.finished).length;
+ if(c.isPlayer)finishScreen(order);
+}
+function finishScreen(order){
+ game.finished=true;
+ const rows=game.cars.filter(x=>x.finished).sort((a,b)=>a.finishT-b.finishT);
+ let html='';
+ rows.forEach((r,i)=>html+=`<div>${i+1}. ${r.name} — ${r.finishT.toFixed(1)}s</div>`);
+ document.getElementById('finTitle').textContent='🏁 第 '+order+' 名完賽！';
+ document.getElementById('finBody').innerHTML=html;
+ document.getElementById('finish').style.display='block';
+}
+function updateHUD(){
+ const p=game.player;
+ document.getElementById('spd').textContent=Math.round(p.speed);
+ document.getElementById('lap').textContent=(Math.min(game.laps,Math.floor(p.progress/TOT)+1))+'/'+game.laps;
+ const order=game.cars.filter(x=>!x.finished).sort((a,b)=>b.progress-a.progress);
+ document.getElementById('pos').textContent=order.indexOf(p)+1;
+ document.getElementById('tm').textContent=game.raceTime.toFixed(1);
+}
+function updateCamera(dt){
+ const p=game.player;if(!p)return;
+ const pos=p.e.position.getValue();if(!pos)return;
+ const dist=game.camMode==='車內'?10:95;
+ const pitch=game.camMode==='車內'?-0.08:-0.35;
+ viewer.camera.lookAt(pos,new Cesium.HeadingPitchRange(p.heading+Math.PI/2,pitch,dist));
+}
+let lastT=performance.now();
+function loop(){const n=performance.now();const dt=Math.min(0.05,(n-lastT)/1000);lastT=n;update(dt);requestAnimationFrame(loop);}
+init();loop();
+</script></body></html>

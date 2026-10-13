@@ -46,6 +46,7 @@ html,body,#cesiumContainer{width:100%;height:100%;margin:0;overflow:hidden;font-
  <div id="note">W/↑加速 · S/↓煞車 · A/D 轉向 · C 視角 · 手機觸控</div>
 </div>
 <script>
+window.__errs=[];window.addEventListener('error',e=>__errs.push('err:'+e.message));window.addEventListener('unhandledrejection',e=>__errs.push('rej:'+(e.reason&&e.reason.message||e.reason)));window.addEventListener('error',e=>{e.preventDefault&&e.preventDefault()},true);
 Cesium.Ion.defaultAccessToken='';
 const container=document.getElementById('cesiumContainer');
 const viewer=new Cesium.Viewer(container,{animation:false,timeline:false,baseLayerPicker:false,geocoder:false,homeButton:false,sceneModePicker:false,navigationHelpButton:false,fullscreenButton:false,infoBox:false,selectionIndicator:false,shouldAnimate:true});
@@ -110,6 +111,7 @@ function switchCam(){game.camMode=game.camMode==='第三身'?'車內':'第三身
 ['dL','dG','dR','dB'].forEach(id=>{const b=document.getElementById(id);b.addEventListener('pointerdown',()=>{keys[id]=true});b.addEventListener('pointerup',()=>keys[id]=false);b.addEventListener('pointerleave',()=>keys[id]=false);});
 // Race flow
 document.getElementById('startBtn').onclick=()=>{
+ try{
  const ai=parseInt(document.getElementById('aiSel').value);
  const laps=parseInt(document.getElementById('lapSel').value);
  const assist=document.getElementById('assistSel').value;
@@ -122,7 +124,7 @@ document.getElementById('startBtn').onclick=()=>{
  document.getElementById('drive').style.display='flex';
  document.getElementById('lights').style.display='flex';
  beginCountdown();
-};
+ }catch(x){window.__errs.push('start:'+x.message+ '\n' + (x.stack||''));document.getElementById('msg').textContent='ERR '+x.message;document.getElementById('msg').style.display='block';}}
 function beginCountdown(){
  game.countdown=4;game.countT=0;game.started=false;game.raceTime=0;
  showLights(3);setMsg('READY');nextCount();

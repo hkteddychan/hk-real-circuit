@@ -156,7 +156,7 @@ function update(dt){
  const brk=keys.s||keys['arrowdown']||keys.dB;
  const turn=(keys.a||keys.dL?-1:0)+(keys.d||keys.dR?1:0);
  // ---- Arcade physics: track-follow progress + lateral offset + heading ----
- const maxSpeed=180,accel=58,brake=95,drag=0.28;
+ const maxSpeed=200,accel=240,brake=260,drag=0.16;
  let targetHeading=trackHeading(p.progress);
  // assist: High = auto-steer + auto-brake; Low = light pull to track
  if(st.assist==='High'){
@@ -180,7 +180,7 @@ function update(dt){
  const off=Math.abs(p.lateral);
  if(off>0.0011){p.speed=Math.max(0,p.speed-160*dt);p.lateral*=0.9;}
  // advance along track
- p.progress+=((p.speed/maxSpeed)*dt)*0.9;
+ p.progress+=((p.speed/maxSpeed)*dt)*2.4;
  // position = track point + perpendicular offset
  const rp=routePos(p.progress);
  const th=trackHeading(p.progress);
@@ -198,7 +198,7 @@ function update(dt){
 function angleDiff(a,b){let d=b-a;while(d>Math.PI)d-=2*Math.PI;while(d<-Math.PI)d+=2*Math.PI;return d;}
 function aiDrive(c,dt){
  const st=game;
- const maxS=110+Math.sin(c.offset*2.3)*25;
+ const maxS=95+Math.sin(c.offset*2.3)*20;
  const t=trackHeading(c.progress);c.heading=t;
  // gap to player ahead on track
  let ahead=null,ga=1e9;
@@ -206,7 +206,7 @@ function aiDrive(c,dt){
  let target=maxS;
  if(ga<0.12)target=Math.min(target,ga*maxS*8);
  c.speed=Math.max(0,c.speed+(target-c.speed)*Math.min(1,2.5*dt));
- c.progress+=((c.speed/180)*dt)/6.0;
+ c.progress+=((c.speed/200)*dt)*2.4;
  const rp=routePos(c.progress);
  c.e.position=Cesium.Cartesian3.fromDegrees(rp.lon,rp.lat,2.5);
  c.e.orientation=Cesium.Transforms.headingPitchRollQuaternion(c.e.position,new Cesium.HeadingPitchRoll(c.heading,0,0));

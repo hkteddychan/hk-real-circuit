@@ -84,7 +84,7 @@ function makeCar(name,color,offset,isPlayer){
   name,
   position:pos,
   orientation:Cesium.Quaternion.IDENTITY,
-  box:{dimensions:new Cesium.Cartesian3(2.2,5.0,1.3),material:Cesium.Color.fromColor(color,0.95),outline:true,outlineColor:Cesium.Color.WHITE},
+  box:{dimensions:new Cesium.Cartesian3(2.2,5.0,1.3),material:color.withAlpha(0.95),outline:true,outlineColor:Cesium.Color.WHITE},
   label:{text:name,font:'12px sans-serif',pixelOffset:new Cesium.Cartesian2(0,-28),fillColor:Cesium.Color.WHITE,show:true,disableDepthTestDistance:2000}
  });
  return {e,name,color,offset,isPlayer,progress:offset*0.03,speed:0,heading:segHeading(0),lateral:0,lapsDone:0,lapStart:0,best:0,lastLap:0,finished:false,finishT:0,onTrack:true};

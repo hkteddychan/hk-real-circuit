@@ -30,6 +30,9 @@ html,body,#cesiumContainer{width:100%;height:100%;margin:0;overflow:hidden;font-
 #secTimes b{color:#72eaff}
 #secTimes .s1{color:#7fff7f}.secTimes .s2{color:#ffd27a}.secTimes .s3{color:#ff8a7f}
 #secTimes .active{text-shadow:0 0 8px currentColor}
+#liftBadge{display:none;margin-top:6px;padding:5px 10px;border:1px solid #2dff6aaa;border-radius:8px;background:#0e3a1fcc;color:#aaffaa;font-weight:700;letter-spacing:1px;font-size:.85rem;text-align:center}
+#liftBadge.in{background:#7a3a0fcc;color:#ffd27a;border-color:#ffa030;animation:pulseLift .35s infinite}
+@keyframes pulseLift{0%,100%{opacity:1}50%{opacity:.55}}
 </style></head><body>
 <div id="cesiumContainer"></div>
 <div id="ui">
@@ -44,11 +47,11 @@ html,body,#cesiumContainer{width:100%;height:100%;margin:0;overflow:hidden;font-
  </div>
  <div id="lights"><div class="l" id="l0"></div><div class="l" id="l1"></div><div class="l" id="l2"></div><div class="l" id="l3"></div></div>
  <div id="msg"></div>
- <div id="hud">SPEED <b id="spd">0</b> km/h<br>LAP <b id="lap">1/3</b> · POS <b id="pos">1</b><br>TIME <b id="tm">0.0</b> s<br>SECTOR <b id="sec">1</b> · <b id="secT">0.0</b>s<br><span id="pitHud" style="color:#7fff7f"></span><br><span id="bestT" style="color:#ffd27a;font-size:.8rem"></span></div>
+ <div id="hud">SPEED <b id="spd">0</b> km/h<br>LAP <b id="lap">1/3</b> · POS <b id="pos">1</b><br>TIME <b id="tm">0.0</b> s<br>SECTOR <b id="sec">1</b> · <b id="secT">0.0</b>s<br><span id="pitHud" style="color:#7fff7f"></span><br><span id="bestT" style="color:#ffd27a;font-size:.8rem"></span><div id="liftBadge">⚡ LIFT OK</div></div>
  <div id="finish"><h2 id="finTitle">🏁 完賽！</h2><div id="finBody"></div><button id="againBtn">🔄 再玩一次</button></div>
  <div id="drive"><button id="dL">◀</button><button id="dG">▲</button><button id="dR">▶</button><button id="dB">▼</button></div>
  <div id="secTimes"><b>SECTORS</b><br><span class="s1">S1 <b id="s1t">—</b></span> · <span class="s2">S2 <b id="s2t">—</b></span> · <span class="s3">S3 <b id="s3t">—</b></span></div>
- <div id="note">W/↑加速 · S/↓煞車 · A/D 轉向 · C 視角 · 手機觸控</div>
+ <div id="note">W/↑加速 · S/↓煞車 · A/D 轉向 · C 視角 · L Lifting Turn · 手機觸控</div>
 </div>
 <script>
 window.__errs=[];window.addEventListener('error',e=>__errs.push('err:'+e.message));window.addEventListener('unhandledrejection',e=>__errs.push('rej:'+(e.reason&&e.reason.message||e.reason)));window.addEventListener('error',e=>{e.preventDefault&&e.preventDefault()},true);
@@ -70,7 +73,7 @@ async function addTiles(url,label){
   return t;
  }catch(e){console.error(label,e);return null}
 }
-async function init(){await Promise.all([addTiles(BASE+'building/tileset.json?key='+KEY,'B'),addTiles(BASE+'infrastructure/tileset.json?key='+KEY,'I')]);fly(114.1588,22.2816,3800);buildTrackVisuals();}
+async function init(){await Promise.all([addTiles(BASE+'building/tileset.json?key='+KEY,'B'),addTiles(BASE+'infrastructure/tileset.json?key='+KEY,'I')]);fly(114.1588,22.2816,3800);buildTrackVisuals();drawRoadDashes();}
 function fly(lon,lat,r){viewer.camera.flyTo({destination:Cesium.Cartesian3.fromDegrees(lon,lat,r),orientation:{heading,pitch,roll:0},duration:1.2})}
 // Real HK route (Central -> Wan Chai -> Causeway Bay -> back)
 const ROUTE=[[114.1588,22.2816],[114.1632,22.2805],[114.1685,22.2788],[114.1722,22.2769],[114.1770,22.2782],[114.1847,22.2800],[114.1815,22.2832],[114.1722,22.2769],[114.1650,22.2798],[114.1588,22.2816]];
@@ -86,6 +89,11 @@ const PIT_SPEED_LIMIT=60;
 const ROAD_HALF_WIDTH=0.0011;
 // Build visual track primitives: centerline, two dashed sidelines, start/finish gate, pit rectangle
 const trackEntities=[];
+let liftBrakeT=0,liftBoostT=0;
+function triggerLift(){if(!game||game.countdown||game.finished)return;if(liftBrakeT>0||liftBoostT>0)return;if(!game.player||game.player.speed<30)return;liftBrakeT=1.0;setMsg('LIFT');setTimeout(()=>setMsg(''),600);}
+window.__lift=()=>({brake:liftBrakeT,boost:liftBoostT});
+window.__camFov=()=>viewer.camera.frustum.fov;
+window.__polyCount=()=>viewer.entities.values.filter(e=>e.polyline).length;
 function offsetPoint(lon,lat,perpDist){
  // approximate perpendicular offset in degrees using local lat scaling
  const dLon=Math.cos(perpDist);const dLat=Math.sin(perpDist);
@@ -156,6 +164,8 @@ function buildTrackVisuals(){
 // Race state
 let game=null;
 function resetGame(aiCount,totalLaps,assist,camMode){
+ liftBrakeT=0;liftBoostT=0;
+ viewer.camera.frustum.fov=Cesium.Math.toRadian(60);
  const st={cars:[],player:null,started:false,countdown:0,countT:0,raceTime:0,laps:totalLaps,assist,camMode,finished:false,
   sector:1,lastSector:1,secT:0,sectorTimes:[0,0,0],sectorActive:false,sectorFlash:0,
   lapStart:0,lastLap:0,lastLapCount:0,best:0,lapFlash:0,
@@ -174,7 +184,8 @@ function makeCar(name,color,offset,isPlayer){
   box:{dimensions:new Cesium.Cartesian3(2.2,5.0,1.3),material:color.withAlpha(0.95),outline:true,outlineColor:Cesium.Color.WHITE},
   label:{text:name,font:'12px sans-serif',pixelOffset:new Cesium.Cartesian2(0,-28),fillColor:Cesium.Color.WHITE,show:true,disableDepthTestDistance:2000}
  });
- return {e,name,color,offset,isPlayer,progress:offset*0.03,speed:0,heading:segHeading(0),lateral:0,lapsDone:0,lapStart:0,best:0,lastLap:0,finished:false,finishT:0,onTrack:true};
+ const _skill=isPlayer?1:Math.min(1,0.7+(offset-1)/6*0.3);
+ return {e,name,color,offset,isPlayer,progress:offset*0.03,speed:0,heading:segHeading(0),lateral:0,lapsDone:0,lapStart:0,best:0,lastLap:0,finished:false,finishT:0,onTrack:true,skill:_skill};
 }
 function segHeading(i){const a=ROUTE[i],b=ROUTE[i+1];return Math.atan2(b[1]-a[1],b[0]-a[0]);}
 function routePos(p){
@@ -196,9 +207,28 @@ function distToRoute(lon,lat){
   const px=a[0]+dx*t,py=a[1]+dy*t;const d=Math.hypot(lon-px,lat-py);if(d<best)best=d;}
  return best;
 }
+// Draw road dashes for speed-feel streaming effect (static on ground; camera-following creates motion)
+function drawRoadDashes(){
+ const N=480;const pts=[];
+ for(let i=0;i<=N;i++){const t=(i/N)*TOT;const r=routePos(t);pts.push(Cesium.Cartesian3.fromDegrees(r.lon,r.lat,0.4));}
+ const dashCount=28;const dashSamples=8;
+ for(let k=0;k<dashCount;k++){
+  const positions=[];const start=Math.floor(k*N/dashCount);
+  for(let j=0;j<=dashSamples;j++)positions.push(pts[(start+j)%N]);
+  viewer.entities.add({polyline:{positions,width:2.2,material:new Cesium.PolylineDashMaterialProperty({color:Cesium.Color.WHITE.withAlpha(0.75),gapColor:Cesium.Color.TRANSPARENT,dashLength:10})}});
+ }
+ const centerPositions=pts;
+ viewer.entities.add({polyline:{positions:centerPositions,width:1.2,material:new Cesium.PolylineDashMaterialProperty({color:Cesium.Color.fromCssColorString('#52dcff').withAlpha(0.45),gapColor:Cesium.Color.TRANSPARENT,dashLength:14})}});
+}
 // Controls
 const keys={};
-window.addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase())||e.key===' ')e.preventDefault();if(e.key.toLowerCase()==='c'&&game&&!game.countdown){switchCam();}});
+window.addEventListener('keydown',e=>{
+ keys[e.key.toLowerCase()]=true;
+ if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase())||e.key===' ')e.preventDefault();
+ const lk=e.key.toLowerCase();
+ if(lk==='c'&&game&&!game.countdown){switchCam();}
+ if(lk==='l'&&game&&!game.countdown&&!game.finished){triggerLift();}
+});
 window.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
 function switchCam(){game.camMode=game.camMode==='第三身'?'車內':'第三身';document.getElementById('camSel').value=game.camMode;}
 ['dL','dG','dR','dB'].forEach(id=>{const b=document.getElementById(id);b.addEventListener('pointerdown',()=>{keys[id]=true});b.addEventListener('pointerup',()=>keys[id]=false);b.addEventListener('pointerleave',()=>keys[id]=false);});
@@ -221,6 +251,7 @@ document.getElementById('startBtn').onclick=()=>{
  }catch(x){window.__errs.push('start:'+x.message+ '\n' + (x.stack||''));document.getElementById('msg').textContent='ERR '+x.message;document.getElementById('msg').style.display='block';}}
 function beginCountdown(){
  game.countdown=4;game.countT=0;game.started=false;game.raceTime=0;
+ game._countTO=null;game._goTO=null;
  game.sector=1;game.lastSector=1;game.secT=0;game.sectorTimes=[0,0,0];game.sectorActive=true;
  game.lapStart=0;game.lastLap=0;game.lastLapCount=0;game.best=0;game.inPit=false;
  showLights(3);setMsg('READY');nextCount();
@@ -228,19 +259,40 @@ function beginCountdown(){
 function nextCount(){
  if(!game)return;
  game.countdown--;
- if(game.countdown<=0){game.started=true;showLights(0,true);setMsg('GO!');setTimeout(()=>setMsg(''),900);return;}
- showLights(game.countdown-1);setMsg(game.countdown);setTimeout(nextCount,800);
+ if(game.countdown<=0){game.started=true;showLights(0,true);setMsg('GO!');game._goTO=setTimeout(()=>setMsg(''),900);return;}
+ showLights(game.countdown-1);setMsg(game.countdown);game._countTO=setTimeout(nextCount,800);
 }
 function showLights(n,go){for(let i=0;i<4;i++){const l=document.getElementById('l'+i);l.className='l'+(i<n?' on':(go&&i===0?' go':''));}}
 function setMsg(t){const m=document.getElementById('msg');if(!t){m.style.display='none';return;}m.textContent=t;m.style.display='block';}
 document.getElementById('againBtn').onclick=()=>{
- for(const c of game.cars){viewer.entities.remove(c.e);}
- game=null;document.getElementById('finish').style.display='none';
+ try{
+ // Remove all car entities (use splice to avoid mutating array during iteration)
+ const remaining=game?game.cars.slice():[];
+ for(const c of remaining){try{viewer.entities.remove(c.e);}catch(_){}}
+ // Reset keys (drive buttons may still be "down")
+ for(const k in keys){keys[k]=false;}
+ // Stop any pending countdown / GO! timeout cascade
+ if(game&&game._countTO)clearTimeout(game._countTO);
+ if(game&&game._goTO)clearTimeout(game._goTO);
+ game=null;
+ // Reset countdown light classes
+ for(let i=0;i<4;i++){const l=document.getElementById('l'+i);if(l)l.className='l';}
+ // Reset all UI panels
+ document.getElementById('finish').style.display='none';
+ document.getElementById('finTitle').textContent='🏁 完賽！';
+ document.getElementById('finBody').innerHTML='';
  document.getElementById('hud').style.display='none';
  document.getElementById('drive').style.display='none';
  document.getElementById('lights').style.display='none';
  document.getElementById('secTimes').style.display='none';
  document.getElementById('menu').style.display='block';
+ const m=document.getElementById('msg');m.style.display='none';m.textContent='';
+ // Reset HUD values to defaults so next race starts clean
+ document.getElementById('spd').textContent='0';
+ document.getElementById('lap').textContent='1/'+(document.getElementById('lapSel').value||'3');
+ document.getElementById('pos').textContent='1';
+ document.getElementById('tm').textContent='0.0';
+ }catch(x){window.__errs.push('again:'+x.message);}
 };
 // Simulation
 function update(dt){
@@ -253,7 +305,10 @@ function update(dt){
  const brk=keys.s||keys['arrowdown']||keys.dB;
  const turn=(keys.a||keys.dL?-1:0)+(keys.d||keys.dR?1:0);
  // ---- Arcade physics: track-follow progress + lateral offset + heading ----
- const maxSpeed=200,accel=240,brake=260,drag=0.16;
+ const maxSpeed=200,accel=240,brake=85,drag=0.16;
+ // Lifting Turn timers
+ if(liftBrakeT>0){liftBrakeT=Math.max(0,liftBrakeT-dt);if(liftBrakeT===0)liftBoostT=2.0;}
+ if(liftBoostT>0)liftBoostT=Math.max(0,liftBoostT-dt);
  let targetHeading=trackHeading(p.progress);
  // assist: High = auto-steer + auto-brake; Low = light pull to track
  if(st.assist==='High'){
@@ -263,11 +318,20 @@ function update(dt){
   p.heading+=angleDiff(p.heading,targetHeading)*Math.min(1,4*dt);
   p.lateral*=0.85;
  }
- // manual steering (heading in radians)
- const turnRate=2.2/(1+Math.abs(p.speed)/100);
- if(st.assist!=='High'){p.heading+=turn*turnRate*dt;}
- // throttle/brake
- const speedUp=(gas?accel:0)-(brk?brake:0);
+ // manual steering (heading in radians): low-speed responsive, high-speed greatly reduced
+ const spdAbs=Math.abs(p.speed);
+ const turnRate=2.6/(1+Math.pow(spdAbs/70,1.6));
+ const liftTurnBoost=liftBrakeT>0?1.8:1.0;
+ if(st.assist!=='High'){p.heading+=turn*turnRate*liftTurnBoost*dt;}
+ // throttle/brake with Lifting Turn auto-deceleration and boost
+ let effAccel=gas?accel:0;
+ let effBrake=brk?brake:0;
+ if(liftBrakeT>0){
+  effBrake=Math.max(effBrake,brake*0.95);
+  effAccel=0;
+ }
+ const liftBoost=liftBoostT>0?1.6:1.0;
+ const speedUp=effAccel*liftBoost-effBrake;
  const dragF=drag*p.speed*(p.speed/maxSpeed)/maxSpeed;
  p.speed=Math.max(0,Math.min(maxSpeed,p.speed+speedUp*dt-dragF*dt));
  // heading vs track -> lateral drift
@@ -309,6 +373,18 @@ function update(dt){
   st.sectorTimes=[0,0,0];
   st.secT=0;st.lapStart=st.raceTime;
  }
+ // player per-car lap record (for finish screen + AI)
+ const newLapsDone=Math.min(st.laps,Math.max(0,Math.floor(p.progress/TOT)));
+ if(newLapsDone>p.lapsDone){
+  const lapTime=st.raceTime-p.lapStart;
+  p.lapStart=st.raceTime;
+  if(lapTime>0){
+   p.lastLap=lapTime;
+   if(p.best===0||lapTime<p.best)p.best=lapTime;
+  }
+  p.lapsDone=newLapsDone;
+  if(p.lapsDone>=st.laps&&!p.finished){finishCar(p);}
+ }
  if(p.progress>=st.laps*TOT&&!p.finished){finishCar(p);}
  // AI
  for(const c of st.cars){if(c.isPlayer||c.finished)continue;aiDrive(c,dt);}
@@ -317,18 +393,46 @@ function update(dt){
 function angleDiff(a,b){let d=b-a;while(d>Math.PI)d-=2*Math.PI;while(d<-Math.PI)d+=2*Math.PI;return d;}
 function aiDrive(c,dt){
  const st=game;
- const maxS=95+Math.sin(c.offset*2.3)*20;
+ const sk=c.skill;
+ // baseline max speed by skill (sk=0.7→115, sk=1.0→155); gentle per-car wobble
+ const maxS=(105+sk*50)+Math.sin(c.offset*2.3)*12;
  const t=trackHeading(c.progress);c.heading=t;
+ // curvature lookahead: look ~1.5 segments ahead, sum |heading delta|
+ const baseSeg=Math.floor(c.progress)%TOT;
+ const baseH=segHeading(baseSeg);
+ let curv=0;
+ for(let k=1;k<=3;k++){const i2=(baseSeg+k)%TOT;curv+=Math.abs(angleDiff(baseH,segHeading(i2)));}
+ curv=curv/3;
+ const corner=Math.min(1,curv/0.7);
+ const brakeDist=0.12+0.08*(1-sk);
+ const cornerSpeedFactor=Math.max(0.45,1-corner*(1.0-sk*0.45));
  // gap to player ahead on track
  let ahead=null,ga=1e9;
  for(const o of st.cars){if(o===c||o.finished)continue;let d=o.progress-c.progress;if(d<0)d+=TOT*1.2;if(d<ga){ga=d;ahead=o;}}
- let target=maxS;
- if(ga<0.12)target=Math.min(target,ga*maxS*8);
- c.speed=Math.max(0,c.speed+(target-c.speed)*Math.min(1,2.5*dt));
+ let target=maxS*cornerSpeedFactor;
+ // slipstream: 0.1~0.2 progress behind a faster car → +15%
+ if(ga>0.1&&ga<0.22&&ahead&&ahead.speed>c.speed*1.05){target*=1.15;}
+ // safety gap braking
+ if(ga<0.18)target=Math.min(target,ga*maxS*7);
+ // accelerate slower for rookies, faster for pros (out-of-corner exit)
+ const accel=2.2+sk*1.8;
+ c.speed=Math.max(0,c.speed+(target-c.speed)*Math.min(1,accel*dt));
  c.progress+=((c.speed/200)*dt)*2.4;
  const rp=routePos(c.progress);
  c.e.position=Cesium.Cartesian3.fromDegrees(rp.lon,rp.lat,2.5);
  c.e.orientation=Cesium.Transforms.headingPitchRollQuaternion(c.e.position,new Cesium.HeadingPitchRoll(c.heading,0,0));
+ // lap detection (AI 都要識 finish)
+ const newLapsDone=Math.min(st.laps,Math.max(0,Math.floor(c.progress/TOT)));
+ if(newLapsDone>c.lapsDone){
+  const lapTime=st.raceTime-c.lapStart;
+  c.lapStart=st.raceTime;
+  if(lapTime>0){
+   c.lastLap=lapTime;
+   if(c.best===0||lapTime<c.best)c.best=lapTime;
+  }
+  c.lapsDone=newLapsDone;
+  if(c.lapsDone>=st.laps&&!c.finished){finishCar(c);}
+ }
  if(c.progress>=st.laps*TOT&&!c.finished){finishCar(c);}
 }
 function finishCar(c){
@@ -338,16 +442,36 @@ function finishCar(c){
 }
 function finishScreen(order){
  game.finished=true;
- const rows=game.cars.filter(x=>x.finished).sort((a,b)=>a.finishT-b.finishT);
- let html='';
- rows.forEach((r,i)=>html+=`<div>${i+1}. ${r.name} — ${r.finishT.toFixed(1)}s</div>`);
- document.getElementById('finTitle').textContent='🏁 第 '+order+' 名完賽！';
+ // sort by finishT (ascending = faster / earlier), unranked DNF appended at bottom
+ const DNF=[];const ranked=[];
+ for(const x of game.cars){(x.finished?ranked:DNF).push(x);}
+ ranked.sort((a,b)=>a.finishT-b.finishT);
+ DNF.sort((a,b)=>b.progress-a.progress);
+ const all=[...ranked,...DNF];
+ let html='<div style="font-size:.85rem;color:#8aaebb;margin-bottom:8px;text-align:left">名次 · 車手 · 總時間 · 最佳圈</div>';
+ let playerRank=null;
+ all.forEach((r,i)=>{
+  const pos=i+1;
+  if(r.isPlayer)playerRank=pos;
+  const tag=r.isPlayer?' 🏁':'';
+  const best=r.best>0?r.best.toFixed(1)+'s':'—';
+  html+=`<div style="display:flex;justify-content:space-between;padding:3px 6px;border-radius:6px;${r.isPlayer?'background:#0e6a8f55;':''}"><span><b>${pos}.</b> ${r.name}${tag}</span><span>${r.finishT>0?r.finishT.toFixed(1)+'s':'未完賽'}</span><span style="color:#72eaff">${best}</span></div>`;
+ });
+ document.getElementById('finTitle').innerHTML='🏁 第 <span style="font-size:1.8rem;color:#72eaff">'+order+'</span> 名完賽！';
  document.getElementById('finBody').innerHTML=html;
  document.getElementById('finish').style.display='block';
+ if(playerRank===null)playerRank=order;
+ game.playerRank=playerRank;
 }
+function bestLap(p){return p&&p.best>0?p.best.toFixed(1)+'s':'—';}
 function updateHUD(){
  const p=game.player;
- document.getElementById('spd').textContent=Math.round(p.speed);
+ const spdEl=document.getElementById('spd');
+ spdEl.textContent=Math.round(p.speed);
+ // Color-code speed: >120 red, >80 orange, else blue (default)
+ if(p.speed>120){spdEl.style.color='#ff4040';spdEl.style.textShadow='0 0 10px #ff404088';}
+ else if(p.speed>80){spdEl.style.color='#ffa040';spdEl.style.textShadow='0 0 8px #ffa04066';}
+ else{spdEl.style.color='#72eaff';spdEl.style.textShadow='';}
  document.getElementById('lap').textContent=(Math.min(game.laps,Math.floor(p.progress/TOT)+1))+'/'+game.laps;
  const order=game.cars.filter(x=>!x.finished).sort((a,b)=>b.progress-a.progress);
  document.getElementById('pos').textContent=order.indexOf(p)+1;
@@ -359,13 +483,33 @@ function updateHUD(){
  if(game.inPit){pitEl.textContent='⚠ PIT — MAX 60 km/h';}else{pitEl.textContent='';}
  const bestEl=document.getElementById('bestT');
  bestEl.textContent=game.best?'BEST '+game.best.toFixed(2)+'s':'BEST —';
+ // Lifting Turn badge
+ const badge=document.getElementById('liftBadge');
+ if(badge){
+  const braking=liftBrakeT>0;
+  const on=braking||liftBoostT>0;
+  badge.style.display=on?'block':'none';
+  badge.className=braking?'in':'';
+  badge.textContent=braking?'⚡ LIFT IN':'⚡ LIFT OK';
+ }
 }
 function updateCamera(dt){
  const p=game.player;if(!p)return;
  const pos=p.e.position.getValue();if(!pos)return;
  const dist=game.camMode==='車內'?10:95;
  const pitch=game.camMode==='車內'?-0.08:-0.35;
- viewer.camera.lookAt(pos,new Cesium.HeadingPitchRange(p.heading+Math.PI/2,pitch,dist));
+ // FOV scales with speed for sense of acceleration (wider at high speed)
+ const baseFov=Cesium.Math.toRadian(60);
+ const targetFov=baseFov+Cesium.Math.toRadian(Math.min(15,p.speed*0.075));
+ const curFov=viewer.camera.frustum.fov;
+ viewer.camera.frustum.fov=curFov+(targetFov-curFov)*Math.min(1,6*dt);
+ // Subtle camera shake at high speed (above 80 km/h)
+ const shakeAmp=p.speed>80?Math.min(0.004,(p.speed-80)*0.00006):0;
+ const t=game.raceTime;
+ const shakeH=Math.sin(t*47)*shakeAmp;
+ const shakeP=Math.cos(t*53)*shakeAmp*0.6;
+ const shakeD=Math.sin(t*61)*shakeAmp*10;
+ viewer.camera.lookAt(pos,new Cesium.HeadingPitchRange(p.heading+Math.PI/2+shakeH,pitch+shakeP,dist+shakeD));
 }
 let lastT=performance.now();
 function loop(){const n=performance.now();const dt=Math.min(0.05,(n-lastT)/1000);lastT=n;update(dt);requestAnimationFrame(loop);}

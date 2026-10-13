@@ -26,6 +26,10 @@ html,body,#cesiumContainer{width:100%;height:100%;margin:0;overflow:hidden;font-
 #drive{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);display:none;gap:10px}
 #drive button{width:60px;height:52px;font-size:1.2rem;border:1px solid #42cfff77;border-radius:12px;background:#10314acc;color:#fff;touch-action:none}
 #note{position:absolute;bottom:6px;left:10px;color:#8aaebb;font-size:.7rem}
+#secTimes{position:absolute;top:12px;left:12px;display:none;padding:10px 14px;border:1px solid #52dcff88;border-radius:12px;background:#071526cc;color:#e9faff;font-size:.8rem;line-height:1.6}
+#secTimes b{color:#72eaff}
+#secTimes .s1{color:#7fff7f}.secTimes .s2{color:#ffd27a}.secTimes .s3{color:#ff8a7f}
+#secTimes .active{text-shadow:0 0 8px currentColor}
 </style></head><body>
 <div id="cesiumContainer"></div>
 <div id="ui">
@@ -40,9 +44,10 @@ html,body,#cesiumContainer{width:100%;height:100%;margin:0;overflow:hidden;font-
  </div>
  <div id="lights"><div class="l" id="l0"></div><div class="l" id="l1"></div><div class="l" id="l2"></div><div class="l" id="l3"></div></div>
  <div id="msg"></div>
- <div id="hud">SPEED <b id="spd">0</b> km/h<br>LAP <b id="lap">1/3</b> · POS <b id="pos">1</b><br>TIME <b id="tm">0.0</b> s</div>
+ <div id="hud">SPEED <b id="spd">0</b> km/h<br>LAP <b id="lap">1/3</b> · POS <b id="pos">1</b><br>TIME <b id="tm">0.0</b> s<br>SECTOR <b id="sec">1</b> · <b id="secT">0.0</b>s<br><span id="pitHud" style="color:#7fff7f"></span><br><span id="bestT" style="color:#ffd27a;font-size:.8rem"></span></div>
  <div id="finish"><h2 id="finTitle">🏁 完賽！</h2><div id="finBody"></div><button id="againBtn">🔄 再玩一次</button></div>
  <div id="drive"><button id="dL">◀</button><button id="dG">▲</button><button id="dR">▶</button><button id="dB">▼</button></div>
+ <div id="secTimes"><b>SECTORS</b><br><span class="s1">S1 <b id="s1t">—</b></span> · <span class="s2">S2 <b id="s2t">—</b></span> · <span class="s3">S3 <b id="s3t">—</b></span></div>
  <div id="note">W/↑加速 · S/↓煞車 · A/D 轉向 · C 視角 · 手機觸控</div>
 </div>
 <script>
@@ -56,23 +61,105 @@ const BASE='https://data.map.gov.hk/api/3d-data/3dsd/WGS84/';
 let heading=0.02,pitch=-0.72,range=4300;
 async function addTiles(url,label){
  try{
-  const t=await Cesium.Cesium3DTileset.fromUrl(url,{maximumScreenSpaceError:32,skipLevelOfDetail:true,preloadFlightDepth:false});
+  const t=await Promise.race([
+   Cesium.Cesium3DTileset.fromUrl(url,{maximumScreenSpaceError:32,skipLevelOfDetail:true,preloadFlightDepth:false}),
+   new Promise((_,rej)=>setTimeout(()=>rej(new Error('tile timeout '+label)),12000))
+  ]);
   viewer.scene.primitives.add(t);
   t.tileCacheSize=256;
   return t;
  }catch(e){console.error(label,e);return null}
 }
-async function init(){await Promise.all([addTiles(BASE+'building/tileset.json?key='+KEY,'B'),addTiles(BASE+'infrastructure/tileset.json?key='+KEY,'I')]);fly(114.1588,22.2816,3800)}
+async function init(){await Promise.all([addTiles(BASE+'building/tileset.json?key='+KEY,'B'),addTiles(BASE+'infrastructure/tileset.json?key='+KEY,'I')]);fly(114.1588,22.2816,3800);buildTrackVisuals();}
 function fly(lon,lat,r){viewer.camera.flyTo({destination:Cesium.Cartesian3.fromDegrees(lon,lat,r),orientation:{heading,pitch,roll:0},duration:1.2})}
 // Real HK route (Central -> Wan Chai -> Causeway Bay -> back)
 const ROUTE=[[114.1588,22.2816],[114.1632,22.2805],[114.1685,22.2788],[114.1722,22.2769],[114.1770,22.2782],[114.1847,22.2800],[114.1815,22.2832],[114.1722,22.2769],[114.1650,22.2798],[114.1588,22.2816]];
 const ROUTE_REF=ROUTE.map(p=>Cesium.Cartesian3.fromDegrees(p[0],p[1],0));
 const TOT=ROUTE.length-1;
+// Sector boundaries: S1=segments 0..2, S2=3..5, S3=6..8 (each sector covers 3 of 9 segs)
+const SECTOR_BOUNDS=[3,6,9];
+const PIT_SEG_START=2; // index 2 = segment ROUTE[2]->ROUTE[3] (Wan Chai approach)
+const PIT_SEG_END=3;
+const PIT_LATERAL=0.0008; // perpendicular distance from track centerline for pit
+const PIT_HALF_WIDTH=0.0009;
+const PIT_SPEED_LIMIT=60;
+const ROAD_HALF_WIDTH=0.0011;
+// Build visual track primitives: centerline, two dashed sidelines, start/finish gate, pit rectangle
+const trackEntities=[];
+function offsetPoint(lon,lat,perpDist){
+ // approximate perpendicular offset in degrees using local lat scaling
+ const dLon=Math.cos(perpDist);const dLat=Math.sin(perpDist);
+ return [lon+dLon,lat+dLat];
+}
+function buildTrackVisuals(){
+ for(const e of trackEntities){try{viewer.entities.remove(e);}catch(_){}}
+ trackEntities.length=0;
+ // 1) Centerline — cyan polyline along ROUTE at slight height for visibility
+ trackEntities.push(viewer.entities.add({
+  polyline:{positions:Cesium.Cartesian3.fromDegreesArrayHeights(
+   ROUTE.flatMap(p=>[p[0],p[1],1.5])),
+   width:6,material:Cesium.Color.fromCssColorString('#52dcff').withAlpha(0.85),
+   clampToGround:false}}));
+ // 2) Side dashed lines — two polylines offset perpendicular by ±ROAD_HALF_WIDTH deg
+ for(const sign of [-1,1]){
+  const pts=[];
+  for(let i=0;i<ROUTE.length;i++){
+   const p=ROUTE[i];
+   const a=ROUTE[Math.max(0,i-1)];
+   const b=ROUTE[Math.min(ROUTE.length-1,i+1)];
+   const th=Math.atan2(b[1]-a[1],b[0]-a[0]);
+   const perp=th+Math.PI/2;
+   pts.push([p[0]+Math.cos(perp)*sign*ROAD_HALF_WIDTH, p[1]+Math.sin(perp)*sign*ROAD_HALF_WIDTH]);
+  }
+  trackEntities.push(viewer.entities.add({
+   polyline:{positions:Cesium.Cartesian3.fromDegreesArrayHeights(pts.flatMap(p=>[p[0],p[1],1.2])),
+    width:2,material:new Cesium.PolylineDashMaterialProperty({color:Cesium.Color.WHITE.withAlpha(0.85),dashLength:8}),
+    clampToGround:false}}));
+ }
+ // 3) Start/Finish gate — black/white checker across track at ROUTE[0] perpendicular
+ const start=ROUTE[0],next=ROUTE[1];
+ const sTh=Math.atan2(next[1]-start[1],next[0]-start[0]);
+ const sPerp=sTh+Math.PI/2;
+ const sL=[start[0]+Math.cos(sPerp)*ROAD_HALF_WIDTH*1.4, start[1]+Math.sin(sPerp)*ROAD_HALF_WIDTH*1.4];
+ const sR=[start[0]-Math.cos(sPerp)*ROAD_HALF_WIDTH*1.4, start[1]-Math.sin(sPerp)*ROAD_HALF_WIDTH*1.4];
+ const segs=8;
+ for(let i=0;i<segs;i++){
+  const t0=i/segs,t1=(i+1)/segs;
+  const lon0=sL[0]+(sR[0]-sL[0])*t0, lat0=sL[1]+(sR[1]-sL[1])*t0;
+  const lon1=sL[0]+(sR[0]-sL[0])*t1, lat1=sL[1]+(sR[1]-sL[1])*t1;
+  const col=(i%2===0)?Cesium.Color.BLACK:Cesium.Color.WHITE;
+  trackEntities.push(viewer.entities.add({polyline:{positions:Cesium.Cartesian3.fromDegreesArrayHeights([lon0,lat0,2.05,lon1,lat1,2.05]),width:5,material:col.withAlpha(0.95)}}));
+ }
+ // 4) Pit lane rectangle — alongside segment ROUTE[2]->ROUTE[3] (114.1685,22.2788 -> 114.1722,22.2769)
+ const pa=ROUTE[PIT_SEG_START],pb=ROUTE[PIT_SEG_END];
+ const pTh=Math.atan2(pb[1]-pa[1],pb[0]-pa[0]);
+ const pPerp=pTh+Math.PI/2;
+ const corners=[
+  [pa[0],                                     pa[1]],
+  [pb[0],                                     pb[1]],
+  [pb[0]+Math.cos(pPerp)*PIT_LATERAL*1.6,     pb[1]+Math.sin(pPerp)*PIT_LATERAL*1.6],
+  [pa[0]+Math.cos(pPerp)*PIT_LATERAL*1.6,     pa[1]+Math.sin(pPerp)*PIT_LATERAL*1.6]
+ ];
+ trackEntities.push(viewer.entities.add({polyline:{positions:Cesium.Cartesian3.fromDegreesArrayHeights(corners.flatMap(c=>[c[0],c[1],0.8])),width:3,material:Cesium.Color.fromCssColorString('#7fff7f').withAlpha(0.9),clampToGround:false}}));
+ trackEntities.push(viewer.entities.add({polygon:{hierarchy:Cesium.Cartesian3.fromDegreesArray(corners.flatMap(c=>[c[0],c[1]])),
+  material:Cesium.Color.fromCssColorString('#1aff5a').withAlpha(0.25),height:0.6}}));
+ const mid=[(pa[0]+pb[0])/2+Math.cos(pPerp)*PIT_LATERAL*0.8, (pa[1]+pb[1])/2+Math.sin(pPerp)*PIT_LATERAL*0.8];
+ trackEntities.push(viewer.entities.add({position:Cesium.Cartesian3.fromDegrees(mid[0],mid[1],25),
+  label:{text:'PIT LANE',font:'bold 14px sans-serif',fillColor:Cesium.Color.fromCssColorString('#7fff7f'),
+   outlineColor:Cesium.Color.BLACK,outlineWidth:3,style:Cesium.LabelStyle.FILL_AND_OUTLINE,disableDepthTestDistance:Number.POSITIVE_INFINITY}}));
+ const midSeg=[(pa[0]+pb[0])/2,(pa[1]+pb[1])/2];
+ trackEntities.push(viewer.entities.add({position:Cesium.Cartesian3.fromDegrees(midSeg[0]+Math.cos(pPerp)*PIT_LATERAL*0.8,midSeg[1]+Math.sin(pPerp)*PIT_LATERAL*0.8,12),
+  label:{text:'⚠ 60',font:'12px sans-serif',fillColor:Cesium.Color.fromCssColorString('#ffd27a'),
+   outlineColor:Cesium.Color.BLACK,outlineWidth:2,style:Cesium.LabelStyle.FILL_AND_OUTLINE,disableDepthTestDistance:Number.POSITIVE_INFINITY}}));
+}
+
 // Race state
 let game=null;
 function resetGame(aiCount,totalLaps,assist,camMode){
- const st={cars:[],player:null,started:false,countdown:0,countT:0,raceTime:0,laps:totalLaps,assist,camMode,finished:false};
- // Player car
+ const st={cars:[],player:null,started:false,countdown:0,countT:0,raceTime:0,laps:totalLaps,assist,camMode,finished:false,
+  sector:1,lastSector:1,secT:0,sectorTimes:[0,0,0],sectorActive:false,sectorFlash:0,
+  lapStart:0,lastLap:0,lastLapCount:0,best:0,lapFlash:0,
+  pitActive:false,inPit:false};
  st.player=makeCar('Player',Cesium.Color.ORANGE,0,true);
  for(let i=0;i<aiCount;i++){st.cars.push(makeCar('AI'+(i+1),Cesium.Color.fromHsl((i*0.21)%1,0.8,0.5),i+1,false));}
  st.cars.push(st.player);
@@ -96,6 +183,12 @@ function routePos(p){
  return {lon:a[0]+(b[0]-a[0])*f,lat:a[1]+(b[1]-a[1])*f,seg,f};
 }
 function trackHeading(p){return segHeading(Math.floor(p)%TOT);}
+function getSector(p){const seg=Math.floor(p)%TOT;if(seg<3)return 1;if(seg<6)return 2;return 3;}
+function isInPit(p,lateral){
+ const seg=Math.floor(p)%TOT;
+ if(seg!==PIT_SEG_START)return false;
+ return Math.abs(lateral)>PIT_LATERAL*0.3 && Math.abs(lateral)<PIT_LATERAL*2.0;
+}
 function distToRoute(lon,lat){
  let best=1e9;
  for(let i=0;i<TOT;i++){const a=ROUTE[i],b=ROUTE[i+1];
@@ -123,10 +216,13 @@ document.getElementById('startBtn').onclick=()=>{
  document.getElementById('hud').style.display='block';
  document.getElementById('drive').style.display='flex';
  document.getElementById('lights').style.display='flex';
+ document.getElementById('secTimes').style.display='block';
  beginCountdown();
  }catch(x){window.__errs.push('start:'+x.message+ '\n' + (x.stack||''));document.getElementById('msg').textContent='ERR '+x.message;document.getElementById('msg').style.display='block';}}
 function beginCountdown(){
  game.countdown=4;game.countT=0;game.started=false;game.raceTime=0;
+ game.sector=1;game.lastSector=1;game.secT=0;game.sectorTimes=[0,0,0];game.sectorActive=true;
+ game.lapStart=0;game.lastLap=0;game.lastLapCount=0;game.best=0;game.inPit=false;
  showLights(3);setMsg('READY');nextCount();
 }
 function nextCount(){
@@ -143,6 +239,7 @@ document.getElementById('againBtn').onclick=()=>{
  document.getElementById('hud').style.display='none';
  document.getElementById('drive').style.display='none';
  document.getElementById('lights').style.display='none';
+ document.getElementById('secTimes').style.display='none';
  document.getElementById('menu').style.display='block';
 };
 // Simulation
@@ -179,6 +276,9 @@ function update(dt){
  // off-track (lateral beyond half road width ~ 0.001 deg) -> slow + pull back
  const off=Math.abs(p.lateral);
  if(off>0.0011){p.speed=Math.max(0,p.speed-160*dt);p.lateral*=0.9;}
+ // pit lane — speed cap when player is laterally in pit zone
+ st.inPit=isInPit(p.progress,p.lateral);
+ if(st.inPit && p.speed>PIT_SPEED_LIMIT){p.speed=Math.max(0,p.speed-220*dt);}
  // advance along track
  p.progress+=((p.speed/maxSpeed)*dt)*2.4;
  // position = track point + perpendicular offset
@@ -189,7 +289,26 @@ function update(dt){
  const lat=rp.lat+Math.sin(perp)*p.lateral;
  p.e.position=Cesium.Cartesian3.fromDegrees(lon,lat,2.5);
  p.e.orientation=Cesium.Transforms.headingPitchRollQuaternion(p.e.position,new Cesium.HeadingPitchRoll(p.heading,0,0));
- // laps
+ // ---- sector timing ----
+ const newSector=getSector(p.progress);
+ if(newSector!==st.sector){
+  if(st.sector>=1 && st.sector<=3){
+   const idx=st.sector-1;
+   if(st.secT>0){st.sectorTimes[idx]=st.secT;setMsg(`S${st.sector} ${st.secT.toFixed(2)}s`);setTimeout(()=>setMsg(''),1100);}
+  }
+  st.secT=0;st.sector=newSector;
+ } else { st.secT+=dt; }
+ // ---- lap detection (progress crosses integer*TOT) ----
+ const curLap=Math.floor(p.progress/TOT);
+ if(curLap>st.lastLapCount && curLap>=1){
+  const lapT=st.raceTime-st.lapStart;
+  st.lastLapCount=curLap;
+  if(lapT>0 && lapT<600){st.lastLap=lapT;if(st.best===0||lapT<st.best)st.best=lapT;}
+  setMsg(`🏁 LAP ${lapT.toFixed(2)}s`+ (st.best?` · BEST ${st.best.toFixed(2)}s`:''));
+  setTimeout(()=>setMsg(''),1400);
+  st.sectorTimes=[0,0,0];
+  st.secT=0;st.lapStart=st.raceTime;
+ }
  if(p.progress>=st.laps*TOT&&!p.finished){finishCar(p);}
  // AI
  for(const c of st.cars){if(c.isPlayer||c.finished)continue;aiDrive(c,dt);}
@@ -233,6 +352,13 @@ function updateHUD(){
  const order=game.cars.filter(x=>!x.finished).sort((a,b)=>b.progress-a.progress);
  document.getElementById('pos').textContent=order.indexOf(p)+1;
  document.getElementById('tm').textContent=game.raceTime.toFixed(1);
+ document.getElementById('sec').textContent=game.sector;
+ document.getElementById('secT').textContent=game.secT.toFixed(1);
+ for(let i=1;i<=3;i++){const el=document.getElementById('s'+i+'t');const v=game.sectorTimes[i-1];el.textContent=v>0?v.toFixed(2):'—';el.parentElement.classList.toggle('active',i===game.sector&&game.sectorActive);}
+ const pitEl=document.getElementById('pitHud');
+ if(game.inPit){pitEl.textContent='⚠ PIT — MAX 60 km/h';}else{pitEl.textContent='';}
+ const bestEl=document.getElementById('bestT');
+ bestEl.textContent=game.best?'BEST '+game.best.toFixed(2)+'s':'BEST —';
 }
 function updateCamera(dt){
  const p=game.player;if(!p)return;

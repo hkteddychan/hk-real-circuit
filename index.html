@@ -33,6 +33,12 @@ html,body,#cesiumContainer{width:100%;height:100%;margin:0;overflow:hidden;font-
 #liftBadge{display:none;margin-top:6px;padding:5px 10px;border:1px solid #2dff6aaa;border-radius:8px;background:#0e3a1fcc;color:#aaffaa;font-weight:700;letter-spacing:1px;font-size:.85rem;text-align:center}
 #liftBadge.in{background:#7a3a0fcc;color:#ffd27a;border-color:#ffa030;animation:pulseLift .35s infinite}
 @keyframes pulseLift{0%,100%{opacity:1}50%{opacity:.55}}
+#minimap{position:absolute;bottom:80px;left:12px;width:200px;height:200px;border:2px solid #52dcff88;border-radius:12px;background:#071526dd;display:none;overflow:hidden;backdrop-filter:blur(4px)}
+#minimap canvas{width:100%;height:100%;display:block}
+#minimapLabel{position:absolute;top:8px;left:8px;color:#72eaff;font-size:.7rem;font-weight:700;letter-spacing:1px;text-shadow:0 1px 2px #000}
+#routeInfo{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:none;padding:18px 28px;border:1px solid #52dcff88;border-radius:14px;background:#071526ee;color:#e9faff;text-align:center;backdrop-filter:blur(8px)}
+#routeInfo h2{margin:0 0 8px;color:#72eaff;font-size:1.1rem}
+#routeInfo p{margin:4px 0;font-size:.85rem;color:#b7d3dd}
 </style></head><body>
 <div id="cesiumContainer"></div>
 <div id="ui">
@@ -51,7 +57,9 @@ html,body,#cesiumContainer{width:100%;height:100%;margin:0;overflow:hidden;font-
  <div id="finish"><h2 id="finTitle">🏁 完賽！</h2><div id="finBody"></div><button id="againBtn">🔄 再玩一次</button></div>
  <div id="drive"><button id="dL">◀</button><button id="dG">▲</button><button id="dR">▶</button><button id="dB">▼</button></div>
  <div id="secTimes"><b>SECTORS</b><br><span class="s1">S1 <b id="s1t">—</b></span> · <span class="s2">S2 <b id="s2t">—</b></span> · <span class="s3">S3 <b id="s3t">—</b></span></div>
- <div id="note">W/↑加速 · S/↓煞車 · A/D 轉向 · C 視角 · L Lifting Turn · 手機觸控</div>
+ <div id="minimap"><div id="minimapLabel">🗺️ MAP</div><canvas id="mmCanvas" width="400" height="400"></canvas></div>
+ <div id="routeInfo"><h2>🏁 WELCOME</h2><p>W/↑ 加速 · S/↓ 煞車 · A/D 轉向</p><p>左下 <b>MAP</b> 顯示路線 + 你的車</p><button id="routeInfoBtn" style="margin-top:10px;padding:8px 18px;border:1px solid #42cfff;border-radius:8px;background:#0e6a8f;color:#fff;font-weight:700;cursor:pointer">開始 GO! →</button></div>
+ <div id="note">W/↑加速 · S/↓煞車 · A/D 轉向 · C 視角 · L Lifting · 手機觸控</div>
 </div>
 <script>
 window.__errs=[];window.addEventListener('error',e=>__errs.push('err:'+e.message));window.addEventListener('unhandledrejection',e=>__errs.push('rej:'+(e.reason&&e.reason.message||e.reason)));window.addEventListener('error',e=>{e.preventDefault&&e.preventDefault()},true);
@@ -74,7 +82,19 @@ async function addTiles(url,label){
  }catch(e){console.error(label,e);return null}
 }
 async function init(){await Promise.all([addTiles(BASE+'building/tileset.json?key='+KEY,'B'),addTiles(BASE+'infrastructure/tileset.json?key='+KEY,'I')]);fly(114.1588,22.2816,3800);buildTrackVisuals();drawRoadDashes();}
+// Slightly higher and forward — so the player can see the road ahead
 function fly(lon,lat,r){viewer.camera.flyTo({destination:Cesium.Cartesian3.fromDegrees(lon,lat,r),orientation:{heading,pitch,roll:0},duration:1.2})}
+let startCamSet=false;
+function setStartCam(){
+ if(startCamSet)return;startCamSet=true;
+ const sp=ROUTE[0],n=ROUTE[1];
+ const th=Math.atan2(n[1]-sp[1],n[0]-sp[0]);
+ // place camera 60m behind start, 50m up, looking along the track
+ const back=Math.PI;
+ const camLon=sp[0]+Math.cos(back+th)*0.0003, camLat=sp[1]+Math.sin(back+th)*0.0003;
+ viewer.camera.setView({destination:Cesium.Cartesian3.fromDegrees(camLon,camLat,55),
+  orientation:{heading:th,pitch:-0.18,roll:0}});
+}
 // Real HK route (Central -> Wan Chai -> Causeway Bay -> back)
 const ROUTE=[[114.1588,22.2816],[114.1632,22.2805],[114.1685,22.2788],[114.1722,22.2769],[114.1770,22.2782],[114.1847,22.2800],[114.1815,22.2832],[114.1722,22.2769],[114.1650,22.2798],[114.1588,22.2816]];
 const ROUTE_REF=ROUTE.map(p=>Cesium.Cartesian3.fromDegrees(p[0],p[1],0));
@@ -220,6 +240,71 @@ function drawRoadDashes(){
  const centerPositions=pts;
  viewer.entities.add({polyline:{positions:centerPositions,width:1.2,material:new Cesium.PolylineDashMaterialProperty({color:Cesium.Color.fromCssColorString('#52dcff').withAlpha(0.45),gapColor:Cesium.Color.TRANSPARENT,dashLength:14})}});
 }
+// ---- Minimap (2D top-down of route + cars) ----
+let mmCtx=null;
+function renderMinimap(){
+ if(!mmCtx){
+  const c=document.getElementById('mmCanvas');
+  if(!c)return;mmCtx=c.getContext('2d');
+ }
+ if(!mmCtx||!game)return;
+ const c=document.getElementById('mmCanvas');
+ const W=c.width,H=c.height;
+ // compute bbox of ROUTE (loose padding)
+ let minLon=Infinity,maxLon=-Infinity,minLat=Infinity,maxLat=-Infinity;
+ for(const p of ROUTE){if(p[0]<minLon)minLon=p[0];if(p[0]>maxLon)maxLon=p[0];if(p[1]<minLat)minLat=p[1];if(p[1]>maxLat)maxLat=p[1];}
+ const padLon=(maxLon-minLon)*0.15,padLat=(maxLat-minLat)*0.15;
+ minLon-=padLon;maxLon+=padLon;minLat-=padLat;maxLat+=padLat;
+ const sx=W/(maxLon-minLon),sy=H/(maxLat-minLat);
+ // clear
+ mmCtx.fillStyle='#071526';mmCtx.fillRect(0,0,W,H);
+ // grid
+ mmCtx.strokeStyle='#10314a';mmCtx.lineWidth=1;
+ for(let i=0;i<=6;i++){mmCtx.beginPath();mmCtx.moveTo(i*W/6,0);mmCtx.lineTo(i*W/6,H);mmCtx.stroke();}
+ for(let i=0;i<=6;i++){mmCtx.beginPath();mmCtx.moveTo(0,i*H/6);mmCtx.lineTo(W,i*H/6);mmCtx.stroke();}
+ // route
+ mmCtx.strokeStyle='#52dcff';mmCtx.lineWidth=4;mmCtx.lineCap='round';mmCtx.lineJoin='round';
+ mmCtx.beginPath();
+ for(let i=0;i<ROUTE.length;i++){
+  const p=ROUTE[i];
+  const x=(p[0]-minLon)*sx, y=H-(p[1]-minLat)*sy;
+  if(i===0)mmCtx.moveTo(x,y); else mmCtx.lineTo(x,y);
+ }
+ mmCtx.closePath();mmCtx.stroke();
+ // start/finish
+ const s=ROUTE[0];
+ mmCtx.fillStyle='#fff';mmCtx.fillRect((s[0]-minLon)*sx-6,H-(s[1]-minLat)*sy-6,12,12);
+ mmCtx.strokeStyle='#000';mmCtx.lineWidth=2;mmCtx.strokeRect((s[0]-minLon)*sx-6,H-(s[1]-minLat)*sy-6,12,12);
+ // pit
+ const pa=ROUTE[PIT_SEG_START],pb=ROUTE[PIT_SEG_END];
+ mmCtx.fillStyle='rgba(127,255,127,0.5)';
+ mmCtx.fillRect(Math.min((pa[0]-minLon)*sx,(pb[0]-minLon)*sx)-3, H-Math.max((pa[1]-minLat)*sy,(pb[1]-minLat)*sy)-3, Math.abs((pb[0]-pa[0])*sx)+6, Math.abs((pb[1]-pa[1])*sy)+6);
+ // cars (AI first, then player on top)
+ for(const car of game.cars){
+  const rp=routePos(car.progress);
+  const x=(rp.lon+Math.cos(trackHeading(car.progress)+Math.PI/2)*car.lateral-minLon)*sx;
+  const y=H-(rp.lat+Math.sin(trackHeading(car.progress)+Math.PI/2)*car.lateral-minLat)*sy;
+  if(car.isPlayer){mmCtx.fillStyle='#ffa030';mmCtx.strokeStyle='#000';mmCtx.lineWidth=2;
+   mmCtx.beginPath();mmCtx.arc(x,y,8,0,Math.PI*2);mmCtx.fill();mmCtx.stroke();
+   // heading arrow
+   const h=car.heading; const len=14;
+   mmCtx.strokeStyle='#ffa030';mmCtx.lineWidth=2;
+   mmCtx.beginPath();mmCtx.moveTo(x,y);mmCtx.lineTo(x+Math.cos(h)*len,y-Math.sin(h)*len);mmCtx.stroke();
+  } else {
+   const c=car.color;
+   const r=Math.round((c.red||0)*255),g=Math.round((c.green||0)*255),b=Math.round((c.blue||0)*255);
+   mmCtx.fillStyle=`rgb(${r},${g},${b})`;mmCtx.strokeStyle='#000';mmCtx.lineWidth=1;
+   mmCtx.beginPath();mmCtx.arc(x,y,5,0,Math.PI*2);mmCtx.fill();mmCtx.stroke();
+  }
+ }
+ // label "YOU" near player
+ if(game.player){
+  const rp=routePos(game.player.progress);
+  const x=(rp.lon-minLon)*sx, y=H-(rp.lat-minLat)*sy;
+  mmCtx.fillStyle='#ffa030';mmCtx.font='bold 11px sans-serif';mmCtx.textAlign='left';
+  mmCtx.fillText('YOU',x+10,y+4);
+ }
+}
 // Controls
 const keys={};
 window.addEventListener('keydown',e=>{
@@ -241,12 +326,20 @@ document.getElementById('startBtn').onclick=()=>{
  const cam=document.getElementById('camSel').value;
  game=resetGame(ai,laps,assist,cam);
  const sp=routePos(0);
- viewer.camera.setView({destination:Cesium.Cartesian3.fromDegrees(sp.lon,sp.lat,220),orientation:{heading:0.6,pitch:-0.4,roll:0}});
+ // first-time camera (lower, follow-friendly) — replaced by lookAt once race starts
+ viewer.camera.setView({destination:Cesium.Cartesian3.fromDegrees(sp.lon,sp.lat,150),orientation:{heading:0.6,pitch:-0.3,roll:0}});
+ // give the player a small initial speed so the game feels alive from the GO! light
+ game.player.speed=40;
  document.getElementById('menu').style.display='none';
  document.getElementById('hud').style.display='block';
  document.getElementById('drive').style.display='flex';
  document.getElementById('lights').style.display='flex';
  document.getElementById('secTimes').style.display='block';
+ document.getElementById('minimap').style.display='block';
+ // brief intro card for first 2.5s then auto-dismiss
+ const ri=document.getElementById('routeInfo');ri.style.display='block';
+ document.getElementById('routeInfoBtn').onclick=()=>{ri.style.display='none';};
+ setTimeout(()=>{if(ri.style.display==='block')ri.style.display='none';},2500);
  beginCountdown();
  }catch(x){window.__errs.push('start:'+x.message+ '\n' + (x.stack||''));document.getElementById('msg').textContent='ERR '+x.message;document.getElementById('msg').style.display='block';}}
 function beginCountdown(){
@@ -285,6 +378,7 @@ document.getElementById('againBtn').onclick=()=>{
  document.getElementById('drive').style.display='none';
  document.getElementById('lights').style.display='none';
  document.getElementById('secTimes').style.display='none';
+ document.getElementById('minimap').style.display='none';
  document.getElementById('menu').style.display='block';
  const m=document.getElementById('msg');m.style.display='none';m.textContent='';
  // Reset HUD values to defaults so next race starts clean
@@ -388,7 +482,7 @@ function update(dt){
  if(p.progress>=st.laps*TOT&&!p.finished){finishCar(p);}
  // AI
  for(const c of st.cars){if(c.isPlayer||c.finished)continue;aiDrive(c,dt);}
- updateHUD();updateCamera(dt);
+ updateHUD();updateCamera(dt);renderMinimap();
 }
 function angleDiff(a,b){let d=b-a;while(d>Math.PI)d-=2*Math.PI;while(d<-Math.PI)d+=2*Math.PI;return d;}
 function aiDrive(c,dt){
